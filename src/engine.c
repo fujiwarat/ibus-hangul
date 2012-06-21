@@ -1066,28 +1066,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
 static void
 ibus_hangul_engine_flush (IBusHangulEngine *hangul)
 {
-    const gunichar *str;
-    IBusText *text;
-
-    ibus_hangul_engine_hide_lookup_table (hangul);
-
-    str = hangul_ic_flush (hangul->context);
-
-    ustring_append_ucs4 (hangul->preedit, str, -1);
-
-    if (ustring_length (hangul->preedit) != 0) {
-        /* clear preedit text before commit */
-        ibus_hangul_engine_clear_preedit_text (hangul);
-
-	str = ustring_begin (hangul->preedit);
-	text = ibus_text_new_from_ucs4 (str);
-
-	ibus_engine_commit_text ((IBusEngine *) hangul, text);
-
-	ustring_clear(hangul->preedit);
-    }
-
-    ibus_hangul_engine_update_preedit_text (hangul);
+    /* ibus_hangul_engine_reset() should not commit strings. */
 }
 
 static void
