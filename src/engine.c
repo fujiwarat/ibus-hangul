@@ -93,8 +93,8 @@ static GObject*
                                              guint                   n_construct_params,
                                              GObjectConstructParam  *construct_params);
 static void     ibus_hangul_engine_destroy  (IBusHangulEngine       *hangul);
-static gboolean
-                ibus_hangul_engine_process_key_event
+static IBusInputContextEvent *
+                ibus_hangul_engine_process_key_event_object
                                             (IBusEngine             *engine,
                                              guint                   keyval,
                                              guint                   keycode,
@@ -389,7 +389,8 @@ ibus_hangul_engine_class_init (IBusHangulEngineClass *klass)
     object_class->constructor = ibus_hangul_engine_constructor;
     ibus_object_class->destroy = (IBusObjectDestroyFunc) ibus_hangul_engine_destroy;
 
-    engine_class->process_key_event = ibus_hangul_engine_process_key_event;
+    engine_class->process_key_event_object =
+            ibus_hangul_engine_process_key_event_object;
 
     engine_class->reset = ibus_hangul_engine_reset;
     engine_class->enable = ibus_hangul_engine_enable;
@@ -1024,20 +1025,27 @@ ibus_hangul_engine_process_candidate_key_event (IBusHangulEngine    *hangul,
     return FALSE;
 }
 
-static gboolean
-ibus_hangul_engine_process_key_event (IBusEngine     *engine,
-                                      guint           keyval,
-                                      guint           keycode,
-                                      guint           modifiers)
+#define PROCESS_KEY_EVENT_SIMPLE_RETURN(processed)                       \
+    ibus_input_context_event_new (                                       \
+                        "event-type", IC_EVENT_PROCESS_KEY_EVENT_RETURN, \
+                        "retval", (processed),                           \
+                        NULL);
+
+static IBusInputContextEvent *
+ibus_hangul_engine_process_key_event_object (IBusEngine     *engine,
+                                             guint           keyval,
+                                             guint           keycode,
+                                             guint           modifiers)
 {
     IBusHangulEngine *hangul = (IBusHangulEngine *) engine;
 
     guint mask;
     gboolean retval;
     const ucschar *str;
+    IBusText *commit_text = NULL;
 
     if (modifiers & IBUS_RELEASE_MASK)
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
 
     // if we don't ignore shift keys, shift key will make flush the preedit 
     // string. So you cannot input shift+key.
@@ -1045,7 +1053,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
     //   dlTek (2 set)
     //   qhRdmaqkq (2 set)
     if (keyval == IBUS_Shift_L || keyval == IBUS_Shift_R)
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
 
     // If a hotkey has any modifiers, we ignore that modifier
     // keyval, or we cannot make the hanja key work.
@@ -1055,31 +1063,31 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
     // to hanja word.
     // See this bug: http://code.google.com/p/ibus/issues/detail?id=1036
     if (hotkey_list_has_modifier(&switch_keys, keyval))
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
 
     if (hotkey_list_match(&switch_keys, keyval, modifiers)) {
         ibus_hangul_engine_switch_input_mode (hangul);
-        return TRUE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (TRUE);
     }
 
     if (hotkey_list_match (&on_keys, keyval, modifiers)) {
         ibus_hangul_engine_set_input_mode (hangul, INPUT_MODE_HANGUL);
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
     }
 
     if (hangul->input_mode == INPUT_MODE_LATIN)
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
 
     /* This feature is for vi* users.
      * On Esc, the input mode is changed to latin */
     if (hotkey_list_match (&off_keys, keyval, modifiers)) {
         ibus_hangul_engine_set_input_mode (hangul, INPUT_MODE_LATIN);
         /* If we return TRUE, then vi will not receive "ESC" key event. */
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
     }
 
     if (hotkey_list_has_modifier(&hanja_keys, keyval))
-	return FALSE; 
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
 
     if (hotkey_list_match(&hanja_keys, keyval, modifiers)) {
         if (hangul->hanja_list == NULL) {
@@ -1087,7 +1095,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
         } else {
             ibus_hangul_engine_hide_lookup_table (hangul);
         }
-        return TRUE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (TRUE);
     }
 
     if (hangul->hanja_list != NULL) {
@@ -1095,9 +1103,9 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
                      keyval, modifiers);
         if (hangul->hanja_mode) {
             if (retval)
-                return TRUE;
+                return PROCESS_KEY_EVENT_SIMPLE_RETURN (TRUE);
         } else {
-            return TRUE;
+            return PROCESS_KEY_EVENT_SIMPLE_RETURN (TRUE);
         }
     }
 
@@ -1110,7 +1118,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
 	    IBUS_MOD1_MASK | IBUS_MOD3_MASK | IBUS_MOD4_MASK | IBUS_MOD5_MASK;
     if (modifiers & mask) {
         ibus_hangul_engine_flush (hangul);
-        return FALSE;
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (FALSE);
     }
 
     if (keyval == IBUS_BackSpace) {
@@ -1166,7 +1174,6 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
             if (hic_preedit != NULL && hic_preedit[0] != 0) {
                 ustring_append_ucs4 (hangul->preedit, str, -1);
             } else {
-                IBusText *text;
                 const ucschar* preedit;
 
                 ustring_append_ucs4 (hangul->preedit, str, -1);
@@ -1175,20 +1182,17 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
                     ibus_hangul_engine_clear_preedit_text (hangul);
 
                     preedit = ustring_begin (hangul->preedit);
-                    text = ibus_text_new_from_ucs4 ((gunichar*)preedit);
-                    ibus_engine_commit_text (engine, text);
+                    commit_text = ibus_text_new_from_ucs4 ((gunichar*)preedit);
                 }
                 ustring_clear (hangul->preedit);
             }
         } else {
             if (str != NULL && str[0] != 0) {
-                IBusText *text;
 
                 /* clear preedit text before commit */
                 ibus_hangul_engine_clear_preedit_text (hangul);
 
-                text = ibus_text_new_from_ucs4 (str);
-                ibus_engine_commit_text (engine, text);
+                commit_text = ibus_text_new_from_ucs4 (str);
             }
         }
 
@@ -1202,54 +1206,14 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
             ibus_hangul_engine_flush (hangul);
     }
 
-    /* We always return TRUE here even if we didn't use this event.
-     * Instead, we forward the event to clients.
-     *
-     * Because IBus has a problem with sync mode.
-     * I think it's limitations of IBus implementation.
-     * We call several engine functions(updating preedit text and committing
-     * text) inside this function.
-     * But clients cannot receive the results of other calls until this
-     * function ends. Clients only get one result from a remote call at a time
-     * because clients may run on event loop.
-     * Clients may process this event first and then get the results which
-     * may change the preedit text or commit text.
-     * So the event order is broken.
-     * Call order:
-     *      engine                          client
-     *                                      call process_key_event
-     *      begin process_key_event
-     *        call commit_text
-     *        call update_preedit_text
-     *      return the event as unused
-     *                                      receive the result of process_key_event
-     *                                      receive the result of commit_text
-     *                                      receive the result of update_preedit_text
-     *
-     * To solve this problem, we return TRUE as if we consumed this event.
-     * After that, we forward this event to clients.
-     * Then clients may get the events in correct order.
-     * This approach is a kind of async processing.
-     * Call order:
-     *      engine                          client
-     *                                      call process_key_event
-     *      begin process_key_event
-     *        call commit_text
-     *        call update_preedit_text
-     *        call forward_key_event
-     *      return the event as used
-     *                                      receive the result of process_key_event
-     *                                      receive the result of commit_text
-     *                                      receive the result of update_preedit_text
-     *                                      receive the forwarded key event
-     *
-     * See: https://github.com/choehwanjin/ibus-hangul/issues/40
-     */
-    if (!retval) {
-        ibus_engine_forward_key_event (engine, keyval, keycode, modifiers);
-    }
+    if (!commit_text)
+        return PROCESS_KEY_EVENT_SIMPLE_RETURN (retval);
 
-    return TRUE;
+    return ibus_input_context_event_new (
+                        "event-type", IC_EVENT_PROCESS_KEY_EVENT_RETURN,
+                        "retval", retval,
+                        "committed-text", commit_text,
+                        NULL);
 }
 
 static void
