@@ -174,7 +174,8 @@ static void ibus_hangul_engine_set_content_type
                                              guint                   purpose,
                                              guint                   hints);
 
-static void ibus_hangul_engine_flush        (IBusHangulEngine       *hangul);
+static void ibus_hangul_engine_flush        (IBusHangulEngine       *hangul,
+                                             gboolean                is_commit);
 static void ibus_hangul_engine_clear_preedit_text
                                             (IBusHangulEngine       *hangul);
 static void ibus_hangul_engine_update_preedit_text
@@ -751,6 +752,7 @@ ibus_hangul_engine_update_preedit_text (IBusHangulEngine *hangul)
                 0x00000000, preedit_len, -1);
         ibus_engine_update_preedit_text_with_mode ((IBusEngine *)hangul,
                                                    text,
+                                                   //0,
                                                    ibus_text_get_length (text),
                                                    TRUE,
                                                    preedit_option);
@@ -1371,7 +1373,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
     mask = IBUS_CONTROL_MASK |
 	    IBUS_MOD1_MASK | IBUS_MOD3_MASK | IBUS_MOD4_MASK | IBUS_MOD5_MASK;
     if (modifiers & mask) {
-        ibus_hangul_engine_flush (hangul);
+        ibus_hangul_engine_flush (hangul, TRUE);
         return FALSE;
     }
 
@@ -1439,7 +1441,7 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
         }
 
         if (!retval)
-            ibus_hangul_engine_flush (hangul);
+            ibus_hangul_engine_flush (hangul, TRUE);
     }
 
     /* We always return TRUE here even if we didn't use this event.
@@ -1497,10 +1499,10 @@ ibus_hangul_engine_process_key_event (IBusEngine     *engine,
 }
 
 static void
-ibus_hangul_engine_flush (IBusHangulEngine *hangul)
+ibus_hangul_engine_flush (IBusHangulEngine *hangul,
+                          gboolean          is_commit)
 {
     const gunichar *str;
-    IBusText *text;
 
     ibus_hangul_engine_hide_lookup_table (hangul);
 
@@ -1511,14 +1513,15 @@ ibus_hangul_engine_flush (IBusHangulEngine *hangul)
     if (ustring_length (hangul->preedit) != 0) {
         /* clear preedit text before commit */
         ibus_hangul_engine_clear_preedit_text (hangul);
+        str = ustring_begin (hangul->preedit);
 
-	str = ustring_begin (hangul->preedit);
-	text = ibus_text_new_from_ucs4 (str);
+        if (is_commit) {
+            IBusText *text = ibus_text_new_from_ucs4 (str);
+            g_debug ("flush:%u: %s", hangul->id, text->text);
+            ibus_engine_commit_text ((IBusEngine *) hangul, text);
+        }
 
-        g_debug ("flush:%u: %s", hangul->id, text->text);
-	ibus_engine_commit_text ((IBusEngine *) hangul, text);
-
-	ustring_clear(hangul->preedit);
+        ustring_clear(hangul->preedit);
     }
 
     ibus_hangul_engine_update_preedit_text (hangul);
@@ -1590,7 +1593,11 @@ ibus_hangul_engine_reset (IBusEngine *engine)
         ustring_clear (hangul->preedit);
     }
 
-    ibus_hangul_engine_flush (hangul);
+    // ibus-hangul uses
+    // ibus_engine_update_preedit_text_with_mode() function which makes
+    // the preedit string committed automatically when the reset is received
+    // So we don't need to commit the preedit here.
+    ibus_hangul_engine_flush (hangul, FALSE);
     IBUS_ENGINE_CLASS (parent_class)->reset (engine);
 }
 
@@ -1692,7 +1699,7 @@ ibus_hangul_engine_property_activate (IBusEngine    *engine,
         }
 
         ibus_engine_update_property (engine, hangul->prop_hanja_mode);
-        ibus_hangul_engine_flush (hangul);
+        ibus_hangul_engine_flush (hangul, TRUE);
     }
 }
 
@@ -1750,7 +1757,7 @@ ibus_hangul_engine_set_input_mode (IBusHangulEngine *hangul, int input_mode)
     IBusText* symbol;
     IBusProperty* prop;
 
-    ibus_hangul_engine_flush (hangul);
+    ibus_hangul_engine_flush (hangul, TRUE);
 
     if (disable_latin_mode) {
         return;
